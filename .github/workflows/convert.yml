@@ -1,4 +1,4 @@
-name: Convert HBMAME sources to MAME XML
+name: Convert HBMAME sources to MAME hash XML
 
 on:
   schedule:
@@ -23,7 +23,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Run conversion
         run: |
