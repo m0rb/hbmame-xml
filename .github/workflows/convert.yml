@@ -1,0 +1,164 @@
+name: Convert HBMAME rom entries to MAME hash XML
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+    paths:
+      - "src/hbmame_xml/**"
+      - ".github/workflows/convert.yml"
+  schedule:
+    - cron: "0 0/12 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Convert HBMAME Commit"
+        required: false
+        default: ""
+        type: string
+      release:
+        description: "Release"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+# Need contents:write to push the auto-commit and create releases.
+permissions:
+  contents: write
+
+jobs:
+  convert:
+    name: Convert latest HBMAME
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out hbmame-xml (this repo)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Check out HBMAME
+        uses: actions/checkout@v4
+        with:
+          repository: Robbbert/hbmame
+          ref: ${{ inputs.ref || 'HEAD' }}
+          path: hbmame
+          fetch-depth: 1
+
+      - name: Record HBMAME commit
+        id: hbmame-commit
+        working-directory: hbmame
+        run: |
+          {
+            echo "sha_short=$(git rev-parse --short HEAD)"
+            echo "sha_full=$(git rev-parse HEAD)"
+            echo "subject=$(git log -1 --pretty=%s)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run conversion
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python3 -m hbmame_xml \
+            --source hbmame \
+            --system neogeo \
+            --output-dir . \
+            --verbose
+
+      - name: Run unit tests
+        run: |
+          PYTHONPATH=src python3 -m unittest discover -s tests -v
+
+      - name: Show summary
+        run: |
+          {
+            echo "## HBMAME -> neogeo conversion"
+            echo
+            echo "- HBMAME commit: \`${{ steps.hbmame-commit.outputs.sha_short }}\` - ${{ steps.hbmame-commit.outputs.subject }}"
+            echo "- machine-xml/neogeo.xml: \`$(wc -c < machine-xml/neogeo.xml)\` bytes, \`$(grep -c '<software ' machine-xml/neogeo.xml)\` software entries"
+            echo "- romset-xml/neogeo: \`$(find romset-xml -name '*.xml' | wc -l)\` per-romset files"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit changes to tracking branch
+        run: |
+          BRANCH="hbmame/neogeo/${{ steps.hbmame-commit.outputs.sha_short }}"
+          git checkout -B "$BRANCH"
+          git add machine-xml romset-xml
+          msg="neogeo: regenerate from HBMAME ${{ steps.hbmame-commit.outputs.sha_short }}"
+          echo "$msg" > /tmp/commit_msg
+          echo "" >> /tmp/commit_msg
+          echo "Source: https://github.com/Robbbert/hbmame/commit/${{ steps.hbmame-commit.outputs.sha_full }}" >> /tmp/commit_msg
+          git commit -F /tmp/commit_msg || echo "no changes to commit"
+          git push -u origin "$BRANCH" || {
+            echo "::warning::Failed to push $BRANCH; check workflow permissions."
+          }
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+        id: push-branch
+
+      - name: Create release archives
+        id: archive
+        if: |
+          github.event_name == 'schedule' ||
+          (github.event_name == 'workflow_dispatch' && inputs.release == 'true') ||
+          startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          sha="${{ steps.hbmame-commit.outputs.sha_short }}"
+          zip -qr "machine-xml-${sha}.zip"  machine-xml
+          zip -qr "romset-xml-${sha}.zip"  romset-xml
+          tar -czf "machine-xml-${sha}.tar.gz" machine-xml
+          tar -czf "romset-xml-${sha}.tar.gz" romset-xml
+          ls -la *.zip *.tar.gz
+          {
+            echo "sha_short=$sha" >> "$GITHUB_OUTPUT"
+          }
+
+      - name: Create GitHub Release
+        if: |
+          github.event_name == 'schedule' ||
+          (github.event_name == 'workflow_dispatch' && inputs.release == 'true') ||
+          startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: weekly-${{ steps.hbmame-commit.outputs.sha_short }}
+          name: "HBMAME neogeo hash files @ ${{ steps.hbmame-commit.outputs.sha_short }}"
+          body: |
+            Auto-regenerated from HBMAME commit
+            [${{ steps.hbmame-commit.outputs.sha_short }}](https://github.com/Robbbert/hbmame/commit/${{ steps.hbmame-commit.outputs.sha_full }}).
+
+            ```
+            ${{ steps.hbmame-commit.outputs.subject }}
+            ```
+
+            Two archive pairs are attached:
+
+            * `machine-xml-<sha>.zip` / `.tar.gz` - the monolithic
+              `neogeo.xml` softwarelist (one file, all 700+ romsets).
+            * `romset-xml-<sha>.zip` / `.tar.gz` - the per-romset
+              directory tree `neogeo/<char>/<romset>.xml` for browsing
+              and diffing individual games.
+
+            The full source conversion lives on the
+            `hbmame/neogeo/<sha>` branch of this repo.
+          files: |
+            machine-xml-${{ steps.hbmame-commit.outputs.sha_short }}.zip
+            machine-xml-${{ steps.hbmame-commit.outputs.sha_short }}.tar.gz
+            romset-xml-${{ steps.hbmame-commit.outputs.sha_short }}.zip
+            romset-xml-${{ steps.hbmame-commit.outputs.sha_short }}.tar.gz
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

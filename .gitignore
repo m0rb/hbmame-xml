@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.venv/
+venv/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Local outputs (uncomment if you don't want to track generated files)
+# neogeo.xml
+
+# Local HBMAME working tree (used for local testing; never committed)
+build/
+hbmame/
