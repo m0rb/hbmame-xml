@@ -168,7 +168,7 @@ def _make_argparser() -> argparse.ArgumentParser:
         "--source", "-s",
         type=Path,
         default=Path(os.environ.get(
-            "HBMAME_SRC", str(Path.home() / "build/hbmame-HEAD")
+            "HBMAME_SRC", "hbmame"
         )),
     )
     p.add_argument(

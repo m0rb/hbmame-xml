@@ -101,13 +101,13 @@ README.md
 The Python package is the same one used by the GitHub workflow.
 
 ```bash
-# Default: read HBMAME from $HBMAME_SRC or ~/build/hbmame-HEAD,
+# Default: read HBMAME from $HBMAME_SRC or hbmame,
 # write machine-xml/ and romset-xml/ to the current directory.
 PYTHONPATH=src python3 -m hbmame_xml --verbose
 
 # Or explicitly:
 PYTHONPATH=src python3 -m hbmame_xml \
-  --source ~/build/hbmame-HEAD \
+  --source hbmame \
   --system neogeo \
   --output-dir . \
   --verbose
@@ -117,7 +117,7 @@ Other CLI options:
 
 | Flag                     | Description |
 | ------------------------ | ----------- |
-| `--source` / `-s`        | Path to the HBMAME working tree (default: `$HBMAME_SRC` or `~/build/hbmame-HEAD`) |
+| `--source` / `-s`        | Path to the HBMAME working tree (default: `$HBMAME_SRC` or `hbmame`) |
 | `--system`               | Target system/softwarelist (default: `neogeo`) |
 | `--output-dir` / `-o`    | Directory to write `machine-xml/` and `romset-xml/` into (default: CWD) |
 | `--no-monolithic`        | Skip writing `machine-xml/<system>.xml`; only emit per-romset files |
@@ -137,7 +137,7 @@ from hbmame_xml.generator import render_softwarelist, render_software_element
 system = get_system("neogeo")
 
 # Build the software list once:
-xml, software_list = convert_system(system, Path("~/build/hbmame-HEAD"))
+xml, software_list = convert_system(system, Path("hbmame"))
 
 # Write both machine-xml/ and romset-xml/ to disk:
 write_outputs(system, Path("."), software_list)
@@ -188,7 +188,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
 The end-to-end tests need a real HBMAME working tree at
-`$HBMAME_SRC` or `~/build/hbmame-HEAD`; they are skipped if that is
+`$HBMAME_SRC` or `hbmame`; they are skipped if that is
 not available.
 
 ## License

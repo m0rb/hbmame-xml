@@ -7,7 +7,7 @@ suitable for use as a standalone hash file (e.g. neogeo.xml).
 
 Typical usage (CLI):
 
-    python -m hbmame_xml --source ~/build/hbmame-HEAD --system neogeo --output neogeo.xml
+    python -m hbmame_xml --source hbmame --system neogeo --output neogeo.xml
 """
 
 __version__ = "0.1.0"

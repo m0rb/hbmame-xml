@@ -1,0 +1,5 @@
+# hbmame-xml requirements
+# This file is used for GitHub Actions dependency installation
+
+# The project uses only the Python standard library
+# No external dependencies are required
