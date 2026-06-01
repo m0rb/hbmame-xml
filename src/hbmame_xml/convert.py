@@ -47,6 +47,7 @@ ROMSET_XML_DIR = "romset-xml"
 def _read_and_parse(
     path: Path,
     global_macros: dict[str, int],
+    allowed_rom_names: List[str],
 ) -> Tuple[List, List]:
     if not path.is_file():
         return [], []
@@ -58,6 +59,8 @@ def _read_and_parse(
     blocks = []
     for b in _extract_rom_blocks(clean):
         try:
+            if b.name not in allowed_rom_names:
+                continue
             blk = parse_rom_block(b.text, b.name, macros)
             blocks.append(blk)
         except Exception:
@@ -105,16 +108,31 @@ def convert_system(
         m = build_macro_table(text)
         global_macros.update(m)
 
-    # Step 2: parse each file using the global macro table
+    # Step 2: collect GAME() macros from all source files, but only those
+    # whose machine field matches this system.  This prevents shared files
+    # (like mnw.cpp) from leaking ROM_START blocks from other systems.
+    allowed_rom_names = []
     for relpath in system.source_files:
         path = source_root / relpath
-        roms, games = _read_and_parse(path, global_macros)
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        clean = strip_cpp_comments(text)
+        games = parse_game_macros(clean)
+        for g in games:
+            all_games.setdefault(g.name, g)
+            if g.driver == system.name:
+                allowed_rom_names.append(g.name)
+
+    # Step 3: parse each file using the global macro table, only keeping
+    # ROM_START blocks with names that match our allowed_rom_names
+    for relpath in system.source_files:
+        path = source_root / relpath
+        roms, games = _read_and_parse(path, global_macros, allowed_rom_names)
         for r in roms:
             if r.name in all_roms:
                 continue
             all_roms[r.name] = _apply_system_fixes(r, system)
-        for g in games:
-            all_games.setdefault(g.name, g)
 
     software_list: List[Software] = []
     for name, rom_block in all_roms.items():

@@ -235,11 +235,36 @@ def discover_machines(source_root: Path) -> Dict[str, System]:
             par = info["parent"]
             if par == info["short"] or par == machine:
                 root_sentinels.add(sn)
+        # Filter source files: only include files that have at least one GAME()
+        # macro with this machine type
+        filtered_files = []
+        for fpath in sorted(driver_files[machine]):
+            full_path = source_root / fpath
+            if not full_path.is_file():
+                continue
+            text = full_path.read_text(encoding="utf-8", errors="replace")
+            has_machine_game = False
+            for m in _GAME_PAT.finditer(text):
+                open_pos = m.end() - 1
+                try:
+                    close_pos = _find_matching_paren(text, open_pos)
+                except ValueError:
+                    continue
+                args_body = text[open_pos + 1: close_pos]
+                try:
+                    info = _parse_game_args(args_body)
+                except ValueError:
+                    continue
+                if info["machine"] == machine:
+                    has_machine_game = True
+                    break
+            if has_machine_game:
+                filtered_files.append(fpath)
         result[machine] = System(
             name=machine,
             description=f"{machine.title()} cartridges",
             part_name="cart",
-            source_files=sorted(driver_files[machine]),
+            source_files=filtered_files,
             root_parent_sentinels=list(root_sentinels | {machine, "0"}),
         )
     return result
