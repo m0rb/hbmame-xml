@@ -173,6 +173,48 @@ class TestSystemDiscovery(unittest.TestCase):
         self.assertEqual("SNK Neo-Geo cartridges", SYSTEMS["neogeo"].description)
 
 
+class TestDriverGrouping(unittest.TestCase):
+    """Tests for folding machine-driver variants into canonical systems."""
+
+    def test_neogeo_variants_collapse(self):
+        from hbmame_xml.systems import canonical_system_name
+        for d in (
+            "neogeo", "neogeo_noslot", "neogeo_dial", "neogeo_kog",
+            "neogeo_mj", "neogeo_noctrl",
+        ):
+            self.assertEqual("neogeo", canonical_system_name(d))
+
+    def test_prefix_requires_boundary(self):
+        # cps1 group must catch cps1_10MHz but not unrelated cps2 siblings.
+        from hbmame_xml.systems import canonical_system_name
+        self.assertEqual("cps1", canonical_system_name("cps1_10MHz"))
+        self.assertEqual("cps2turbo", canonical_system_name("cps2turbo"))
+        self.assertEqual("dead_cps2", canonical_system_name("dead_cps2"))
+
+    def test_longest_prefix_and_unknown_passthrough(self):
+        from hbmame_xml.systems import canonical_system_name
+        # No "sega" group, so distinct sega boards stay separate.
+        self.assertEqual("sega_aburner2", canonical_system_name("sega_aburner2"))
+        # Unknown drivers map to themselves.
+        self.assertEqual("pacman", canonical_system_name("pacman"))
+
+    def test_claims_keeps_lists_disjoint(self):
+        from hbmame_xml.systems import System
+        neo = System(name="neogeo")
+        pl = System(name="playch10")
+        self.assertTrue(neo.claims("neogeo_kog"))
+        self.assertFalse(neo.claims("playch10"))
+        self.assertTrue(pl.claims("playch10_f"))
+        self.assertFalse(pl.claims("neogeo_noslot"))
+
+    def test_explicit_claimed_drivers(self):
+        from hbmame_xml.systems import System
+        # A driver only seen in upstream MAME files can be allow-listed.
+        sysx = System(name="foo", claimed_drivers={"foo_weird"})
+        self.assertTrue(sysx.claims("foo_weird"))
+        self.assertTrue(sysx.claims("foo"))  # canonical self-match
+
+
 class TestPerRomsetPath(unittest.TestCase):
     """Tests for per-romset path calculation."""
 

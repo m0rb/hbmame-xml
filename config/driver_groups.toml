@@ -1,0 +1,44 @@
+# Driver grouping configuration
+# ==============================
+#
+# HBMAME / MAME define one C++ "machine" driver function per hardware
+# configuration.  The 4th argument of each GAME() macro names that driver
+# (e.g. neogeo_noslot, neogeo_kog, pgm_arm_type1).  Many of those drivers
+# are just hardware-config variants (different CPU clock, input setup,
+# protection chip, ...) of a single logical system, and in real MAME they
+# all share ONE softwarelist (e.g. "neogeo").
+#
+# Without grouping, `--system all` emits one softwarelist per driver, which
+# fragments a single system across dozens of files/directories
+# (neogeo_dial, neogeo_kog, neogeo_mj, neogeo_noslot, ...).
+#
+# This file maps each canonical softwarelist name to the driver-name
+# prefixes that belong to it.  A discovered driver `d` is folded into a
+# canonical group `C` when, for one of C's prefixes `p`:
+#
+#     d == p            (exact match)        e.g. "pgm"      -> "pgm"
+#     d.startswith(p + "_")                  e.g. "pgm_asic3" -> "pgm"
+#
+# When several prefixes match, the LONGEST prefix wins, so you can carve
+# out sub-families (e.g. group "sega_system32" without swallowing the
+# unrelated "sega_aburner2").  Any driver that matches no prefix keeps its
+# own name as its own softwarelist, so adding new HBMAME systems needs no
+# edits here unless they ship multiple driver variants.
+#
+# To merge a new family: add `canonical = ["prefix", ...]`.  Prefixes are
+# matched literally (case-sensitive, exactly as they appear in GAME()).
+
+[groups]
+neogeo    = ["neogeo"]      # neogeo, neogeo_noslot, neogeo_dial/imaze/kiz4p/kog/mj/noctrl
+pgm       = ["pgm"]         # pgm + pgm_arm_type*, pgm_asic3, pgm_022_025_killbld, ...
+cps1      = ["cps1"]        # cps1_10MHz, cps1_12MHz
+system16b = ["system16b"]   # system16b + _fd1094 / _i8751
+playch10  = ["playch10"]    # playch10 + _f / _g
+f3        = ["f3"]          # f3 + _224a / _224b  (Taito F3)
+cv1k      = ["cv1k"]        # cv1k + _d           (Cave CV1000)
+mcr       = ["mcr"]         # mcr_90010, mcr_91490 (Midway MCR)
+williams  = ["williams"]    # williams_base, williams_muxed
+tunit     = ["tunit"]       # tunit_adpcm, tunit_dcs (Midway T-unit)
+wunit     = ["wunit"]       # wunit_picemu, wunit_picsim (Midway Wolf-unit)
+yunit     = ["yunit"]       # yunit_adpcm_6bit_fast, yunit_cvsd_6bit_slow (Midway Y-unit)
+mhavocpe  = ["mhavocpe"]    # mhavocpe_adpcm, mhavocpe_lpc (Major Havoc CE)

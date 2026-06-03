@@ -15,8 +15,9 @@ The generated artifacts are committed back to this repository and
 
 ## What it does
 
-Given the HBMAME source tree, for each `<system>` (currently just
-`neogeo`) the converter produces two outputs:
+Given the HBMAME source tree, for each `<system>` (auto-discovered from
+the driver files, with hardware variants merged — see **Driver
+grouping** below) the converter produces two outputs:
 
 1.  **Monolithic softwarelist** (under `machine-xml/`) — The canonical,
     single-file MAME hash format with the full XML/DOCTYPE preamble and a
@@ -45,7 +46,11 @@ Under the hood the converter:
 4. Matches `GAME(name)` entries to `ROM_START(name)` blocks by their
    short name.  For duplicate definitions (MAME upstream vs. HBMAME
    slot-less variants), the first definition seen wins, so the
-   upstream MAME definitions take precedence.
+   upstream MAME definitions take precedence.  A romset is only kept
+   for a system when the system *claims* that game's machine driver
+   (see **Driver grouping** below), so a romset can never land in more
+   than one softwarelist.  A run aborts with a non-zero exit if any
+   romset is ever claimed by two systems.
 5. Renders one `<software>` element per romset, with proper
    `<part interface="neo_cart">`, `<dataarea width="16"
    endianness="big">`, `<rom loadflag="load16_word_swap" .../>` and
@@ -56,12 +61,53 @@ Under the hood the converter:
    `sm1.sm1`, ...).  The cartridge hash file only describes the
    cart-side content.
 
+## Driver grouping
+
+Each `GAME()` macro names the C++ *machine driver* it runs on (its 4th
+argument), e.g. `neogeo_noslot`, `neogeo_kog`, `pgm_arm_type1`.  Many of
+those drivers are just hardware-config variants (different CPU clock,
+input layout, protection chip, ...) of a single logical system, and in
+real MAME they all share one softwarelist.
+
+`--system all` would otherwise emit one softwarelist per driver, which
+fragments e.g. Neo Geo across `neogeo_noslot`, `neogeo_dial`,
+`neogeo_kog`, `neogeo_mj`, ... — eight separate lists.  To avoid that,
+driver names are folded into a **canonical** softwarelist name before any
+output is written.
+
+The mapping lives in [`config/driver_groups.toml`](config/driver_groups.toml):
+
+```toml
+[groups]
+neogeo    = ["neogeo"]      # neogeo, neogeo_noslot, neogeo_kog, neogeo_mj, ...
+pgm       = ["pgm"]         # pgm + pgm_arm_type*, pgm_asic3, ...
+cps1      = ["cps1"]        # cps1_10MHz, cps1_12MHz
+system16b = ["system16b"]   # system16b + _fd1094 / _i8751
+# ...
+```
+
+Each entry maps a canonical name to the driver-name **prefixes** that
+belong to it.  A driver `d` folds into canonical `C` when, for one of C's
+prefixes `p`, `d == p` or `d.startswith(p + "_")`.  The longest matching
+prefix wins, so you can carve out sub-families without swallowing
+unrelated siblings (e.g. group `sega_system32` without merging
+`sega_aburner2`).  Any driver matching no prefix keeps its own name as
+its own softwarelist, so adding a brand-new HBMAME system needs no edits
+here unless it ships several driver variants.
+
+To merge a new family, just add a line to the `[groups]` table.  The file
+is the single source of truth for both `--system all` and a single
+`--system <name>` run.  (`HBMAME_XML_CONFIG` can point at an alternate
+config file; if the file is missing the converter falls back to a
+built-in default copy of the same map.)
+
 ## Repository layout
 
 ```
-machine-xml/                    # monolithic softwarelist(s)
-├── neogeo.xml                  #   1.2 MB, all 713 romsets
-├── ...                         #   (more systems in future)
+machine-xml/                    # monolithic softwarelist(s), one per system
+├── neogeo.xml                  #   all neogeo romsets (4900+), variants merged
+├── pgm.xml                     #   pgm + all pgm_* driver variants
+├── ...                         #   (one file per canonical system)
 └── ...
 
 romset-xml/                     # per-romset directory tree
@@ -149,11 +195,21 @@ per_romset = {
 }
 ```
 
-## Adding new systems
+## Adding / tuning systems
 
-To support another HBMAME system (e.g. `cps1`, `cps2`, `neogeocd`):
+Most systems need **no** code at all: `--system all` auto-discovers every
+machine driver in the HBMAME tree and emits a softwarelist per canonical
+name.  There are two things you may want to do:
 
-1.  Add a new `System` instance in `src/hbmame_xml/systems.py`:
+1.  **Merge driver variants** of one system into a single list — edit
+    [`config/driver_groups.toml`](config/driver_groups.toml) and add a
+    `canonical = ["prefix", ...]` line (see **Driver grouping** above).
+    No Python changes required.
+
+2.  **Curate rendering details** for a system (its `<part interface=...>`,
+    `default_sharedfeat`, `fix_maincpu`, a nicer description, extra
+    upstream MAME source files, ...) — add a `System` instance in
+    `src/hbmame_xml/systems.py` and register it in `SYSTEMS`:
 
     ```python
     CPS1 = System(
@@ -161,25 +217,21 @@ To support another HBMAME system (e.g. `cps1`, `cps2`, `neogeocd`):
         description="Capcom CPS-1 cartridges",
         part_name="cart",
         interface="cps1_cart",
-        source_files=[
-            "src/mame/drivers/cps1.cpp",
-            "src/hbmame/drivers/cps1.cpp",
-            "src/hbmame/drivers/cps1bl_5205.cpp",
-            "src/hbmame/drivers/cps1mis.cpp",
-        ],
+        source_files=["src/mame/drivers/cps1.cpp"],
         root_parent_sentinels=["cps1", "cps_state"],
         default_sharedfeat=[],
     )
     SYSTEMS["cps1"] = CPS1
     ```
 
-2.  Add a job (or extend the existing one) in
-    `.github/workflows/convert.yml` to write `cps1.xml` and the
-    `cps1/<char>/<romset>.xml` tree.
+    During `--system all`, a curated `System` is automatically merged with
+    the discovered drivers for that canonical name: the curated rendering
+    attributes win, while discovered source files and parent sentinels are
+    merged in.  The workflow already runs `--system all`, so no per-system
+    job is needed.
 
-The parser is generic; the only per-system config is the list of
-source files and which `GAME()` "parent" values denote a parent set
-vs. a clone.
+The parser itself is generic; the only per-system knobs are the driver
+grouping config and the optional curated `System` overrides.
 
 ## Running the tests
 

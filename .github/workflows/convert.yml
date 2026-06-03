@@ -4,12 +4,26 @@ on:
   schedule:
     - cron: "0 0/12 * * *"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "HBMAME ref to convert"
+        required: false
+        default: "master"
+
+# This repo holds only the converter + workflow. The generated XML is pushed
+# to the data repo (m0rb/hbmame-xml-data) using DATA_REPO_TOKEN, so we only
+# need read access to this repo's contents.
+permissions:
+  contents: read
+
+env:
+  DATA_REPO: m0rb/hbmame-xml-data
 
 jobs:
   convert:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout hbmame-xml
+      - name: Checkout hbmame-xml (converter)
         uses: actions/checkout@v4
 
       - name: Checkout HBMAME
@@ -24,47 +38,74 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Run tests
+        run: PYTHONPATH=src python -m unittest discover -s tests
+
       - name: Run conversion
         run: |
+          rm -rf out && mkdir -p out
           PYTHONPATH=src python -m hbmame_xml \
             --source hbmame \
             --system all \
-            --output-dir . \
+            --output-dir out \
             --verbose
-
-      - name: Run tests
-        run: |
-          PYTHONPATH=src python -m unittest discover -s tests
-
-      - name: Commit generated XML back to repo
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add machine-xml/ romset-xml/
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Update machine-xml and romset-xml from HBMAME conversion"
-            git push
-          fi
-
-      - name: Show summary
-        run: |
-          echo "## Conversion Results"
-          echo "- **Machine XML files:** $(ls -1 machine-xml/*.xml 2>/dev/null | wc -l)"
-          echo "- **Romset XML files:** $(find romset-xml/ -name '*.xml' 2>/dev/null | wc -l)"
 
       - name: Create archives
         run: |
-          zip -r machine-xml.zip machine-xml
-          zip -r romset-xml.zip romset-xml
+          ( cd out && zip -qr ../machine-xml.zip machine-xml )
+          ( cd out && zip -qr ../romset-xml.zip romset-xml )
 
-      - name: Create release
+      - name: Summary
+        run: |
+          {
+            echo "## Conversion Results"
+            echo "- **Softwarelists:** $(ls -1 out/machine-xml/*.xml 2>/dev/null | wc -l)"
+            echo "- **Romset XML files:** $(find out/romset-xml -name '*.xml' 2>/dev/null | wc -l)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish XML to data repo (single rolling commit)
+        env:
+          DATA_REPO_TOKEN: ${{ secrets.DATA_REPO_TOKEN }}
+        run: |
+          STAMP="$(date -u +%Y-%m-%dT%H:%MZ)"
+          HBREV="$(git -C hbmame rev-parse --short HEAD)"
+          cat > out/README.md <<EOF
+          # hbmame-xml-data
+
+          Auto-generated MAME hash XML converted from
+          [HBMAME](https://github.com/Robbbert/hbmame) by
+          [m0rb/hbmame-xml](https://github.com/m0rb/hbmame-xml).
+
+          **Do not edit by hand.** This branch is force-updated on every run
+          (single rolling commit); see the \`latest\` release for zipped
+          archives of each run.
+
+          - \`machine-xml/\` — one monolithic \`<softwarelist>\` per system.
+          - \`romset-xml/<system>/<char>/<romset>.xml\` — one bare
+            \`<software>\` per file.
+
+          Last generated: ${STAMP} from HBMAME ${HBREV}.
+          EOF
+
+          cd out
+          git init -q
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b main
+          git add -A
+          git commit -q -m "HBMAME ${HBREV} -> MAME hash XML (${STAMP})"
+          git push -f \
+            "https://x-access-token:${DATA_REPO_TOKEN}@github.com/${DATA_REPO}.git" \
+            main
+
+      - name: Publish release on data repo
         uses: softprops/action-gh-release@v2
         with:
+          repository: ${{ env.DATA_REPO }}
+          token: ${{ secrets.DATA_REPO_TOKEN }}
           name: "HBMAME to MAME XML conversion"
           tag_name: "latest"
-          body: "Conversion of all HBMAME machines to MAME XML format"
+          body: "Conversion of all HBMAME machines to MAME hash XML format."
           files: |
             machine-xml.zip
             romset-xml.zip

@@ -38,7 +38,13 @@ from .generator import (
 )
 from .models import Software
 from .parser import parse_game_macros, parse_rom_blocks, strip_cpp_comments, build_macro_table
-from .systems import System, get_system, list_systems, discover_machines
+from .systems import (
+    System,
+    canonical_system_name,
+    discover_machines,
+    get_system,
+    list_systems,
+)
 
 MACHINE_XML_DIR = "machine-xml"
 ROMSET_XML_DIR = "romset-xml"
@@ -121,7 +127,7 @@ def convert_system(
         games = parse_game_macros(clean)
         for g in games:
             all_games.setdefault(g.name, g)
-            if g.driver == system.name:
+            if system.claims(g.driver):
                 allowed_rom_names.append(g.name)
 
     # Step 3: parse each file using the global macro table, only keeping
@@ -220,24 +226,30 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         print(f"error: HBMAME source dir {args.source} not found.", file=sys.stderr)
         return 2
 
-    # Determine which systems to convert
+    # Determine which systems to convert.  Discovery folds variant drivers
+    # into their canonical softwarelist (see config/driver_groups.toml) and
+    # overlays curated built-ins, so it is the single source of truth for
+    # both "all" and a single named system.
+    machines = discover_machines(args.source)
     if args.system == "all":
-        machines = discover_machines(args.source)
         systems_to_convert = [machines[k] for k in sorted(machines)]
         if args.verbose:
             print(
-                f"auto-discovered {len(systems_to_convert)} machines",
+                f"auto-discovered {len(systems_to_convert)} systems",
                 file=sys.stderr,
             )
+    elif args.system in machines:
+        systems_to_convert = [machines[args.system]]
     else:
-        # Try built-in systems first, then auto-discovered ones.
-        try:
-            systems_to_convert = [get_system(args.system)]
-        except KeyError:
-            machines = discover_machines(args.source)
-            if args.system in machines:
-                systems_to_convert = [machines[args.system]]
-            else:
+        # Fall back to a curated built-in (e.g. a system with no GAME()
+        # entries in the HBMAME tree), or report an unknown canonical name.
+        canon = canonical_system_name(args.system)
+        if canon in machines:
+            systems_to_convert = [machines[canon]]
+        else:
+            try:
+                systems_to_convert = [get_system(args.system)]
+            except KeyError:
                 print(
                     f"error: unknown system {args.system!r}",
                     file=sys.stderr,
@@ -246,6 +258,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     total_mono = 0
     total_rom = 0
+    # Track which system emitted each romset so we can guarantee no romset
+    # ends up in two softwarelists (e.g. a neogeo set leaking into playch10).
+    romset_owner: dict[str, str] = {}
+    collisions: list[str] = []
     for system in systems_to_convert:
         if args.verbose:
             print(
@@ -268,6 +284,13 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             if args.verbose:
                 print(f"  -> no romsets found, skipping", file=sys.stderr)
             continue
+
+        for sw in software_list:
+            prev = romset_owner.get(sw.name)
+            if prev is not None and prev != system.name:
+                collisions.append(f"{sw.name}: {prev} and {system.name}")
+            else:
+                romset_owner[sw.name] = system.name
 
         monopath, per_paths = write_outputs(
             system,
@@ -298,6 +321,17 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             f"\nTotal: {total_mono} machine XMLs, {total_rom} romset files",
             file=sys.stderr,
         )
+
+    if collisions:
+        print(
+            f"error: {len(collisions)} romset(s) claimed by more than one "
+            f"softwarelist:",
+            file=sys.stderr,
+        )
+        for line in collisions[:50]:
+            print(f"  {line}", file=sys.stderr)
+        return 1
+
     return 0
 
 

@@ -15,8 +15,13 @@ venv/
 .DS_Store
 *.swp
 
-# Local outputs (uncomment if you don't want to track generated files)
-# neogeo.xml
+# Generated output. This repo holds only the tool + workflow; the XML is
+# produced by the workflow and pushed to the data repo (m0rb/hbmame-xml-data).
+# Never committed here.
+machine-xml/
+romset-xml/
+*.zip
+out/
 
 # Local HBMAME working tree (used for local testing; never committed)
 build/
